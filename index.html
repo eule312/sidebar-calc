@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sidebar Calc</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { margin: 0; background:#111; color:#fff; }
+    .wrap { padding: 12px; max-width: 420px; margin: 0 auto; }
+    .card { background:#1b1b1b; border-radius: 16px; padding: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
+    .row { display:flex; gap:8px; align-items:center; }
+    input {
+      width: 100%; border:0; outline:none; border-radius: 12px;
+      padding: 12px 12px; background:#0f0f0f; color:#fff;
+      font-size: 18px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    }
+    .result {
+      margin-top: 10px; background:#0f0f0f; border-radius: 12px;
+      padding: 10px 12px; text-align:right;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
+    }
+    .result .expr { opacity:.7; font-size: 12px; min-height: 16px; }
+    .result .val { font-size: 28px; font-weight: 650; line-height: 1.2; }
+
+    .grid { margin-top: 12px; display:grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    button{
+      border:0; border-radius: 14px; padding: 12px 8px;
+      background:#2a2a2a; color:#fff; cursor:pointer;
+      font-size: 16px;
+      user-select:none;
+    }
+    button:active{ transform: translateY(1px); }
+    .op { background:#3a2a55; }
+    .accent { background:#d46b08; }
+    .muted { background:#3a3a3a; }
+    .wide { grid-column: span 2; }
+    .tiny { font-size: 14px; opacity:.9; }
+
+    .hist {
+      margin-top: 12px; background:#141414; border-radius: 14px; padding: 10px;
+    }
+    .histHead{ display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .histHead h3{ margin:0; font-size: 13px; opacity:.85; font-weight: 650; }
+    .histHead .tools{ display:flex; gap:8px; }
+    .histHead .tools button{ padding: 8px 10px; border-radius: 10px; font-size: 13px; }
+    ul{ list-style:none; padding:0; margin:10px 0 0 0; max-height: 32dvh; overflow:auto; }
+    li{
+      padding: 8px 10px; border-radius: 12px; background:#1f1f1f;
+      margin-bottom: 8px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      cursor:pointer;
+      display:flex; justify-content:space-between; gap:10px;
+    }
+    li:hover{ background:#252525; }
+    .liExpr{ opacity:.9; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+    .liVal{ opacity:.95; flex:0 0 auto; }
+    .hint{ margin-top: 10px; font-size: 12px; opacity:.65; line-height:1.4; }
+    code{ background:#0f0f0f; padding: 2px 6px; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" role="application" aria-label="電卓">
+      <div class="row">
+        <input id="expr" inputmode="text" autocomplete="off" spellcheck="false"
+               placeholder="例: (1000+250)*1.1 - 300" />
+      </div>
+
+      <div class="result" aria-live="polite">
+        <div class="expr" id="lastExpr"></div>
+        <div class="val" id="val">0</div>
+      </div>
+
+      <div class="grid" aria-label="ボタン">
+        <button class="muted" data-act="clear">AC</button>
+        <button class="muted" data-act="back">⌫</button>
+        <button class="muted" data-act="paren">()</button>
+        <button class="op" data-ins="/">÷</button>
+
+        <button data-ins="7">7</button>
+        <button data-ins="8">8</button>
+        <button data-ins="9">9</button>
+        <button class="op" data-ins="*">×</button>
+
+        <button data-ins="4">4</button>
+        <button data-ins="5">5</button>
+        <button data-ins="6">6</button>
+        <button class="op" data-ins="-">−</button>
+
+        <button data-ins="1">1</button>
+        <button data-ins="2">2</button>
+        <button data-ins="3">3</button>
+        <button class="op" data-ins="+">＋</button>
+
+        <button class="wide" data-ins="0">0</button>
+        <button data-ins=".">.</button>
+        <button class="accent" data-act="eval">=</button>
+      </div>
+
+      <div class="hist">
+        <div class="histHead">
+          <h3>履歴（クリックで再入力）</h3>
+          <div class="tools">
+            <button class="muted tiny" data-act="undo">↑戻す</button>
+            <button class="muted tiny" data-act="clearHist">履歴消去</button>
+          </div>
+        </div>
+        <ul id="history"></ul>
+      </div>
+
+      <div class="hint">
+        キー操作: <code>Enter</code>=計算 / <code>Esc</code>=AC / <code>Backspace</code>=1文字消す /
+        テンキー<code>+ - * /</code>対応。<code>()</code>もOK。
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $expr = document.getElementById("expr");
+    const $val = document.getElementById("val");
+    const $lastExpr = document.getElementById("lastExpr");
+    const $hist = document.getElementById("history");
+
+    const MAX_HISTORY = 60; // 数十件。重くならない範囲で固定
+    const LS_KEY = "sidebar_calc_history_v1";
+
+    // 入力の undo（簡易）
+    let undoStack = [];
+
+    function pushUndo() {
+      const s = $expr.value;
+      if (undoStack.length === 0 || undoStack[undoStack.length - 1] !== s) {
+        undoStack.push(s);
+        if (undoStack.length > 80) undoStack.shift();
+      }
+    }
+
+    function safeFormat(n) {
+      if (!Number.isFinite(n)) return "Error";
+      const s = String(n);
+      if (s.length <= 14) return s;
+      return n.toPrecision(12).replace(/\.?0+$/, "");
+    }
+
+    function sanitizeExpression(raw) {
+      // 許可: 数字, 空白, + - * / . ( )
+      // それ以外が混じったらエラー扱い（Functionを安全寄りに）
+      const ok = /^[0-9+\-*/().\s]*$/.test(raw);
+      if (!ok) return null;
+
+      // 連続スペース整形（表示用）
+      return raw.replace(/\s+/g, " ").trim();
+    }
+
+    function evaluateExpression(expr) {
+      // Function を使うが、上の sanitize で記号を制限している前提
+      // 0除算や NaN は Error 表示
+      const v = Function("return (" + expr + ")")();
+      return v;
+    }
+
+    function renderHistory(items) {
+      $hist.innerHTML = "";
+      for (const it of items) {
+        const li = document.createElement("li");
+        const left = document.createElement("span");
+        const right = document.createElement("span");
+        left.className = "liExpr";
+        right.className = "liVal";
+        left.textContent = it.expr;
+        right.textContent = it.val;
+        li.append(left, right);
+
+        // クリックで再入力
+        li.addEventListener("click", () => {
+          pushUndo();
+          $expr.value = it.expr;
+          $expr.focus();
+          // ついでにプレビュー
+          preview();
+        });
+
+        $hist.appendChild(li);
+      }
+    }
+
+    function loadHistory() {
+      try {
+        const raw = localStorage.getItem(LS_KEY);
+        if (!raw) return [];
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return [];
+        return arr.filter(x => x && typeof x.expr === "string" && typeof x.val === "string").slice(0, MAX_HISTORY);
+      } catch {
+        return [];
+      }
+    }
+
+    function saveHistory(items) {
+      try { localStorage.setItem(LS_KEY, JSON.stringify(items.slice(0, MAX_HISTORY))); } catch {}
+    }
+
+    let historyItems = loadHistory();
+    renderHistory(historyItems);
+
+    function addHistory(expr, val) {
+      // 同じもの連打で増えすぎ防止（直近と同一なら更新だけ）
+      if (historyItems[0] && historyItems[0].expr === expr) {
+        historyItems[0].val = val;
+      } else {
+        historyItems.unshift({ expr, val });
+      }
+      if (historyItems.length > MAX_HISTORY) historyItems.length = MAX_HISTORY;
+      saveHistory(historyItems);
+      renderHistory(historyItems);
+    }
+
+    function setResult(exprText, valueText) {
+      $lastExpr.textContent = exprText || "";
+      $val.textContent = valueText || "0";
+    }
+
+    function preview() {
+      const s = sanitizeExpression($expr.value);
+      if (s === null || s.length === 0) {
+        setResult("", "0");
+        return;
+      }
+      try {
+        const v = evaluateExpression(s);
+        setResult(s, safeFormat(v));
+      } catch {
+        setResult(s, "Error");
+      }
+    }
+
+    function insertAtCursor(text) {
+      const el = $expr;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+      const before = el.value.slice(0, start);
+      const after = el.value.slice(end);
+
+      el.value = before + text + after;
+      const pos = start + text.length;
+      el.setSelectionRange(pos, pos);
+      el.focus();
+    }
+
+    function backspaceOne() {
+      const el = $expr;
+      const start = el.selectionStart ?? el.value.length;
+      const end = el.selectionEnd ?? el.value.length;
+
+      if (start !== end) {
+        el.value = el.value.slice(0, start) + el.value.slice(end);
+        el.setSelectionRange(start, start);
+        return;
+      }
+      if (start === 0) return;
+      el.value = el.value.slice(0, start - 1) + el.value.slice(start);
+      el.setSelectionRange(start - 1, start - 1);
+    }
+
+    function smartParen() {
+      // 「今までの '(' の数 - ')' の数」が正なら ')' を、そうでなければ '(' を入れる
+      const s = $expr.value;
+      const open = (s.match(/\(/g) || []).length;
+      const close = (s.match(/\)/g) || []).length;
+
+      // 末尾が数字/)/. なら「閉じ」優先、それ以外は「開き」優先
+      const tail = s.trim().slice(-1);
+      const canClose = open > close && /[0-9)\.]/.test(tail);
+
+      insertAtCursor(canClose ? ")" : "(");
+    }
+
+    function doEval() {
+      const s = sanitizeExpression($expr.value);
+      if (s === null || s.length === 0) { setResult("", "0"); return; }
+
+      try {
+        const v = evaluateExpression(s);
+        const out = safeFormat(v);
+        setResult(s, out);
+
+        if (out !== "Error") addHistory(s, out);
+
+        // = のあと結果を入力欄に残す派はここを ON（今はOFF）
+        // $expr.value = out;
+
+      } catch {
+        setResult(s, "Error");
+      }
+    }
+
+    function clearAll() {
+      pushUndo();
+      $expr.value = "";
+      setResult("", "0");
+      $expr.focus();
+    }
+
+    function undo() {
+      const prev = undoStack.pop();
+      if (prev === undefined) return;
+      $expr.value = prev;
+      $expr.focus();
+      preview();
+    }
+
+    // クリック操作
+    document.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+
+      const ins = btn.dataset.ins;
+      const act = btn.dataset.act;
+
+      if (ins != null) {
+        pushUndo();
+        insertAtCursor(ins);
+        preview();
+        return;
+      }
+
+      if (act === "clear") { clearAll(); return; }
+      if (act === "back") { pushUndo(); backspaceOne(); preview(); return; }
+      if (act === "paren") { pushUndo(); smartParen(); preview(); return; }
+      if (act === "eval") { doEval(); return; }
+      if (act === "undo") { undo(); return; }
+      if (act === "clearHist") {
+        historyItems = [];
+        saveHistory(historyItems);
+        renderHistory(historyItems);
+        return;
+      }
+    });
+
+    // キーボード & テンキー対応
+    document.addEventListener("keydown", (e) => {
+      // 入力欄以外でも動くように（サイドバーで便利）
+      const k = e.key;
+
+      // 計算
+      if (k === "Enter" || k === "=") {
+        e.preventDefault();
+        doEval();
+        return;
+      }
+
+      // AC
+      if (k === "Escape") {
+        e.preventDefault();
+        clearAll();
+        return;
+      }
+
+      // Undo（Ctrl+Z）
+      if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "z") {
+        e.preventDefault();
+        undo();
+        return;
+      }
+
+      // Backspace / Delete
+      if (k === "Backspace") {
+        // 通常の入力削除に任せてもいいが、履歴やフォーカス外でも動くようにする
+        if (document.activeElement !== $expr) {
+          e.preventDefault();
+          pushUndo();
+          backspaceOne();
+          preview();
+        } else {
+          // 入力欄のデフォルト挙動の前に undo を積む
+          pushUndo();
+          // ちょい遅延でプレビュー更新
+          setTimeout(preview, 0);
+        }
+        return;
+      }
+
+      // テンキーの演算子は key で普通に "+-*/" になるのでそのままOK
+      // ただし入力欄フォーカスがないときも打てるように、許可文字は全部入力欄へ挿入する
+      const allowed = /^[0-9+\-*/().]$/.test(k);
+      if (allowed && document.activeElement !== $expr) {
+        e.preventDefault();
+        pushUndo();
+        insertAtCursor(k);
+        preview();
+        return;
+      }
+
+      // 入力欄で普通に打ってる場合は、入力後にプレビュー更新だけ
+      if (document.activeElement === $expr) {
+        // 許可文字っぽいなら更新
+        if (allowed || k === " " ) setTimeout(preview, 0);
+      }
+    });
+
+    // 入力変化でプレビュー
+    $expr.addEventListener("input", () => preview());
+
+    // 初期表示
+    $expr.value = "";
+    preview();
+  </script>
+</body>
+</html>
